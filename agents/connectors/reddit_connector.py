@@ -1,66 +1,93 @@
 """
 reddit_connector.py
 -------------------
-Reddit Data Source Connector module for the Data Collection Agent.
+Reddit Dataset Connector for the Data Collection Agent.
 
-Architecture & Credentials Documentation:
-----------------------------------------
-- Source Name: 'reddit'
-- Required Credentials: REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USER_AGENT (Environment Variables)
-- Target Service: Reddit Data API via PRAW (Python Reddit API Wrapper)
-- Collected Data: Subreddit posts, self-text content, post titles, post permalinks, submission timestamps
-- Access Requirements: Reddit Developer account & registered script application.
+Enforces strict relevance filtering on Reddit_Data.csv.
 """
 
 import os
+import re
+import pandas as pd
 from typing import List, Dict, Any, Optional
 from .base_connector import BaseConnector
 
 
 class RedditConnector(BaseConnector):
-    """Reddit Data Source Connector implementing PRAW/Reddit API integration structure."""
+    """Reddit dataset connector for sentiment analysis."""
 
-    def __init__(
+    def __init__(self, dataset_path: Optional[str] = None):
+        self.dataset_path = dataset_path or os.path.join(
+            "datasets", "Reddit_Data.csv"
+        )
+
+        super().__init__(
+            source_name="reddit",
+            api_key=None
+        )
+
+    def fetch_data(
         self,
-        client_id: Optional[str] = None,
-        client_secret: Optional[str] = None,
-        user_agent: Optional[str] = None
-    ):
-        self.client_id = client_id or os.getenv("REDDIT_CLIENT_ID")
-        self.client_secret = client_secret or os.getenv("REDDIT_CLIENT_SECRET")
-        self.user_agent = user_agent or os.getenv("REDDIT_USER_AGENT", "SentimentAgenticSystem/1.0")
+        query: str = "",
+        max_items: int = 10
+    ) -> List[Dict[str, Any]]:
 
-        super().__init__(source_name="reddit", api_key=self.client_secret)
+        query = str(query or "").strip()
+        if not query:
+            return []
 
-    def fetch_data(self, query: str, max_items: int = 10) -> List[Dict[str, Any]]:
-        """
-        Fetches submissions/comments matching the search query via Reddit API.
-
-        Args:
-            query (str): Search topic or keyword.
-            max_items (int): Maximum items to retrieve.
-
-        Returns:
-            List[Dict[str, Any]]: Standardized collection items.
-        """
-        if not self.client_id or not self.client_secret:
-            raise ValueError(
-                "[RedditConnector] Missing API Credentials: Set 'REDDIT_CLIENT_ID' and "
-                "'REDDIT_CLIENT_SECRET' environment variables to enable live Reddit collection."
+        if not os.path.exists(self.dataset_path):
+            raise FileNotFoundError(
+                f"[RedditConnector] Dataset not found: {self.dataset_path}"
             )
 
-        # =======================================================================
-        # LIVE API INTEGRATION STRUCTURE (Active when credentials are set)
-        # =======================================================================
-        # import praw
-        # reddit = praw.Reddit(
-        #     client_id=self.client_id,
-        #     client_secret=self.client_secret,
-        #     user_agent=self.user_agent
-        # )
-        # for submission in reddit.subreddit('all').search(query, limit=max_items):
-        #     # process submission.title, submission.selftext, submission.url
-        # =======================================================================
+        df = pd.read_csv(self.dataset_path)
+        df = df.dropna(subset=["clean_comment"])
+
+        # Token-based relevance filtering
+        query_clean = query.lower()
+        raw_tokens = re.findall(r"\b[a-zA-Z0-9]+\b", query_clean)
+        stopwords = {
+            "a", "an", "the", "and", "or", "for", "is", "of", "in", "on", "to",
+            "with", "about", "at", "by", "from", "it", "this", "that"
+        }
+        tokens = [t for t in raw_tokens if t not in stopwords and len(t) > 1]
+        if not tokens:
+            tokens = raw_tokens
+
+        mask = pd.Series(True, index=df.index)
+        if tokens:
+            for token in tokens:
+                mask = mask & df["clean_comment"].astype(str).str.lower().str.contains(token, na=False, regex=False)
+        else:
+            mask = df["clean_comment"].astype(str).str.lower().str.contains(query_clean, na=False, regex=False)
+
+        matching = df[mask]
+        matching = matching.head(max_items)
 
         results = []
+        for _, row in matching.iterrows():
+            try:
+                category = int(float(row["category"]))
+                if category == 1:
+                    sentiment = "positive"
+                elif category == -1:
+                    sentiment = "negative"
+                else:
+                    sentiment = "neutral"
+            except (ValueError, TypeError):
+                sentiment = "neutral"
+
+            results.append({
+                "source": "reddit",
+                "title": "Reddit Comment",
+                "text": str(row["clean_comment"]),
+                "url": "",
+                "timestamp": "",
+                "rating": "",
+                "category": sentiment,
+                "product_name": ""
+            })
+
+        print(f"[RedditConnector] Dataset search for '{query}' complete. Matching records retrieved: {len(results)}")
         return results

@@ -1,12 +1,2 @@
-pandas
-numpy
-scikit-learn
-transformers
-torch
-streamlit
-matplotlib
-datasets
-accelerate
-evaluate
-python-dotenv
-google-api-python-client
+atproto==0.0.70
+requests
