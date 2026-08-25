@@ -5,3 +5,5 @@ __pycache__/
 models/*/model.safetensors
 results_temp/
 results_temp_exp2/
+
+datasets/
